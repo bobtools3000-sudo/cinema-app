@@ -1,17 +1,21 @@
 import React, { useState } from 'react';
+import { Client } from "@gradio/client";
 import { Video, Image as ImageIcon, Sparkles, Download, Film, Play, RefreshCw, Wand2, AlertCircle } from 'lucide-react';
 
 export default function App() {
   const [mode, setMode] = useState('text-to-video');
   const [prompt, setPrompt] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
+  const [imageFile, setImageFile] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [statusText, setStatusText] = useState('');
   const [videoUrl, setVideoUrl] = useState(null);
   const [error, setError] = useState(null);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      setImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setSelectedImage(reader.result);
@@ -22,33 +26,61 @@ export default function App() {
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
-      setError('يرجى إدخال وصف للمشهد أولاً');
+      setError('يرجى إدخال وصف تفصيلي للمشهد أولاً');
       return;
     }
     setError(null);
     setIsGenerating(true);
     setVideoUrl(null);
+    setStatusText('جاري الاتصال بمحرك الفيديو المفتوح...');
 
     try {
-      const seed = Math.floor(Math.random() * 9999999);
-      const cleanPrompt = encodeURIComponent(prompt.trim() + " cinematic motion 4k animation");
+      if (mode === 'text-to-video') {
+        setStatusText('جاري توليد إطارات الفيديو (قد يستغرق 30-60 ثانية)...');
+        // الاتصال بنموذج توليد الفيديو المفتوح LTX-Video عبر Gradio
+        const client = await Client.connect("Lightricks/LTX-Video-Demo");
+        const result = await client.predict("/generate_video", {
+          prompt: prompt.trim() + ", clean fluid motion, high framerate, detailed, cinema lighting",
+          negative_prompt: "blurry, low quality, distorted, static, deformed, ugly",
+          seed: Math.floor(Math.random() * 100000),
+          randomize_seed: true,
+          guidance_scale: 3.5,
+          num_inference_steps: 30
+        });
 
-      // رابط توليد فيديو مباشر بدون حظر الـ IP
-      const generatedMediaUrl = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=768&height=432&seed=${seed}&nologo=true&private=true`;
+        if (result && result.data && result.data[0]) {
+          const videoData = result.data[0];
+          setVideoUrl(videoData.video?.url || videoData.url || videoData);
+        } else {
+          throw new Error('لم يتم استلام ملف الفيديو من النموذج');
+        }
+      } else {
+        if (!imageFile) {
+          setError('يرجى اختيار صورة أولاً لتحريكها');
+          setIsGenerating(false);
+          return;
+        }
+        setStatusText('جاري تحريك الصورة بناءً على الوصف...');
+        // محرك تحريك الصور Stable Video Diffusion
+        const client = await Client.connect("multimodalart/stable-video-diffusion");
+        const result = await client.predict("/video", {
+          input_image: imageFile,
+          motion_bucket_id: 127,
+          fps_id: 6,
+          version: "svd_xt"
+        });
 
-      // التحقق من صلاحية واستجابة الرابط
-      const response = await fetch(generatedMediaUrl);
-      if (!response.ok) {
-        throw new Error('السيرفر مشغول حالياً، يرجى المحاولة بعد لحظات');
+        if (result && result.data && result.data[0]) {
+          const videoData = result.data[0];
+          setVideoUrl(videoData.video?.url || videoData.url || videoData);
+        } else {
+          throw new Error('فشل معالجة حركة الصورة');
+        }
       }
-
-      const blob = await response.blob();
-      const localUrl = URL.createObjectURL(blob);
-      
-      setVideoUrl(localUrl);
       setIsGenerating(false);
     } catch (err) {
-      setError('حدث ضغط على خوادم المعالجة، جرب تعديل الوصف أو أعد الضغط مجدداً.');
+      console.error(err);
+      setError('السيرفر عليه ضغط مؤقت. جرب الضغط مجدداً بعد ثوانٍ قليلة.');
       setIsGenerating(false);
     }
   };
@@ -63,12 +95,12 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-wide">CineStudio AI</h1>
-            <p className="text-xs text-slate-400">منصة إنتاج الفيديو المفتوحة والشاملة</p>
+            <p className="text-xs text-slate-400">توليد فيديو سينمائي حقيقي (MP4 Video Engine)</p>
           </div>
         </div>
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-950 text-emerald-300 border border-emerald-800">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-          جاهز للإنتاج
+          LTX & SVD Engine
         </span>
       </header>
 
@@ -99,7 +131,7 @@ export default function App() {
         </button>
       </div>
 
-      {/* Main Container */}
+      {/* Main Workspace */}
       <main className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Controls */}
         <section className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex flex-col gap-4">
@@ -131,15 +163,15 @@ export default function App() {
           )}
 
           <div>
-            <label className="block text-xs text-slate-400 mb-2">وصف المشهد أو زاوية الكاميرا المطلوبة:</label>
+            <label className="block text-xs text-slate-400 mb-2">وصف المشهد وتفاصيل الحركة:</label>
             <textarea
               rows={4}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder={
                 mode === 'text-to-video'
-                  ? 'اكتب وصف اللقطة بالتفصيل...'
-                  : 'صف حركة الكاميرا والعناصر في الصورة...'
+                  ? 'اكتب وصف الحركة بالتفصيل بالإنجليزية للحصول على أفضل دقة من النموذج...'
+                  : 'اكتب وصف الحركة الإضافية للصورة المرفوعة...'
               }
               className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm focus:outline-none focus:border-emerald-500 transition resize-none text-right"
             />
@@ -164,7 +196,7 @@ export default function App() {
             {isGenerating ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                جاري المعالجة والإنتاج...
+                جاري إنتاج الفيديو...
               </>
             ) : (
               <>
@@ -175,31 +207,35 @@ export default function App() {
           </button>
         </section>
 
-        {/* Output Screen */}
+        {/* Video Output Player */}
         <section className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex flex-col">
           <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2 mb-4">
             <Video className="w-4 h-4 text-emerald-400" />
-            شاشة العرض المباشر
+            مشغل الفيديو النهائي (MP4)
           </h2>
 
-          <div className="flex-1 min-h-[260px] bg-slate-950 border border-slate-800/80 rounded-xl overflow-hidden flex flex-col items-center justify-center relative">
+          <div className="flex-1 min-h-[280px] bg-slate-950 border border-slate-800/80 rounded-xl overflow-hidden flex flex-col items-center justify-center relative">
             {isGenerating ? (
-              <div className="flex flex-col items-center gap-3 p-4 text-center">
+              <div className="flex flex-col items-center gap-3 p-6 text-center">
                 <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
-                <p className="text-xs text-slate-400 animate-pulse">جاري بناء الإطارات السينمائية وحساب الإضاءة...</p>
+                <p className="text-xs text-slate-300 font-medium">{statusText}</p>
+                <p className="text-[11px] text-slate-500">يتم رندرة الحركة عبر نموذج LTX المفتوح</p>
               </div>
             ) : videoUrl ? (
               <div className="w-full h-full flex flex-col items-center justify-center p-2">
-                <img
+                <video
                   src={videoUrl}
-                  alt="Generated Output"
-                  className="w-full h-auto max-h-[300px] object-contain rounded-lg shadow"
+                  controls
+                  autoPlay
+                  loop
+                  playsInline
+                  className="w-full h-auto max-h-[320px] rounded-lg shadow-xl border border-slate-800"
                 />
               </div>
             ) : (
               <div className="text-center p-6 flex flex-col items-center gap-2">
                 <Film className="w-10 h-10 text-slate-800" />
-                <p className="text-xs text-slate-500">لا يوجد محتوى مولد حالياً. أدخل الوصف ثم اضغط إنتاج.</p>
+                <p className="text-xs text-slate-500">لم يتم توليد فيديو بعد. اكتب الوصف واضغط إنتاج.</p>
               </div>
             )}
           </div>
@@ -208,11 +244,11 @@ export default function App() {
             <div className="mt-4">
               <a
                 href={videoUrl}
-                download="cinestudio-scene.png"
-                className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-xs font-medium rounded-xl flex items-center justify-center gap-2 transition text-slate-200"
+                download="cinestudio-video.mp4"
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 transition"
               >
                 <Download className="w-3.5 h-3.5" />
-                تحميل المشهد المولد
+                تحميل الفيديو (MP4)
               </a>
             </div>
           )}
